@@ -18,7 +18,8 @@ REGLAS:
 5) Si pregunta precios, di que depende del proyecto y ofrece asesoría personalizada.
 6) Si quiere agendar cita, dile que puede escribir "agendar" para comenzar el proceso.
 7) Si no sabes algo, di que lo consultas con el equipo.
-8) Si preguntan por servicios, describe brevemente los que ofrece la empresa.`;
+8) Si preguntan por servicios, describe brevemente los que ofrece la empresa.
+9) Si es fuera de horario, responde igual pero menciona que el equipo le responderá en horario laboral.`;
 
 const STOP_WORDS = ['parar', 'cancelar', 'salir', 'stop', 'no quiero mensajes', 'cancela', 'cancel', 'detener', 'no mas', 'no más'];
 
@@ -51,7 +52,7 @@ class GroqService {
       });
 
       return response.data.choices?.[0]?.message?.content || 
-        `Hola ${userName}, gracias por comunicarse con Lopez Tech. Un momento por favor.`;
+        `Hola ${userName}, gracias por comunicarse con Lopez Tech. ¿En qué puedo ayudarle?`;
     } catch (error) {
       logger.error(`Error en Groq API: ${error.message}`);
       return `Hola ${userName}, gracias por comunicarse con Lopez Tech. ¿En qué puedo ayudarle?`;
@@ -112,12 +113,7 @@ class MessageHandler {
     if (this.isStopWord(text)) {
       await ycloud.sendText(phone, `Entendido, ${name}. No volveremos a escribirle. Si en el futuro necesita nuestros servicios, puede contactarnos cuando quiera. ¡Éxitos! 🤝`);
       this.saveHistory(phone, 'user', text);
-      this.saveHistory(phone, 'assistant', `Opt-out confirmado. No volverá a contactar.`);
-      return;
-    }
-
-    if (!this.isInBusinessHours()) {
-      await ycloud.sendText(phone, `Hola ${name}, gracias por escribirnos. Nuestro horario de atención es lunes a viernes de 8am a 6pm y sábados de 9am a 1pm. Con gusto le atendemos dentro de nuestro horario. 🕐`);
+      this.saveHistory(phone, 'assistant', `Opt-out confirmado.`);
       return;
     }
 
@@ -132,7 +128,7 @@ class MessageHandler {
 
     await ycloud.sendText(phone, aiResponse);
 
-    logger.info(`💬 ${name} (${phone}): "${text}" → IA: "${aiResponse.substring(0, 50)}..."`);
+    logger.info(`💬 ${name} (${phone}): "${text}" → "${aiResponse.substring(0, 60)}..."`);
   }
 }
 
