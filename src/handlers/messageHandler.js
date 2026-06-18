@@ -146,6 +146,18 @@ class MessageHandler {
     `, [phone, today]);
   }
 
+  async getClientAppointmentsByName(name) {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    return await queryAll(`
+      SELECT a.id, a.service, a.date, a.time, a.duration_minutes, a.status, a.notes, c.name as client_name
+      FROM appointments a
+      JOIN clients c ON a.client_id = c.id
+      WHERE c.name ILIKE $1 AND a.date >= $2 AND a.status IN ('pending', 'confirmed')
+      ORDER BY a.date ASC, a.time ASC
+      LIMIT 5
+    `, [`%${name}%`, today]);
+  }
+
   async getClientPastAppointments(phone) {
     const today = format(new Date(), 'yyyy-MM-dd');
     return await queryAll(`
@@ -156,6 +168,30 @@ class MessageHandler {
       ORDER BY a.date DESC, a.time DESC
       LIMIT 3
     `, [phone, today]);
+  }
+
+  async getAllAppointmentsForAI(phone, text) {
+    let upcoming = await this.getClientAppointments(phone);
+    let past = await this.getClientPastAppointments(phone);
+    let searchedByName = false;
+
+    if (upcoming.length === 0) {
+      const nameMatch = text.match(/(?:a nombre de|nombre:?\s*)(.+?)(?:\s+|$)/i);
+      if (nameMatch) {
+        const searchName = nameMatch[1].trim();
+        upcoming = await this.getClientAppointmentsByName(searchName);
+        searchedByName = true;
+      } else {
+        const allClients = await queryAll('SELECT id, name, phone FROM clients ORDER BY created_at DESC LIMIT 20');
+        const nameInText = allClients.find(c => text.toLowerCase().includes(c.name.toLowerCase()));
+        if (nameInText) {
+          upcoming = await this.getClientAppointments(nameInText.phone);
+          searchedByName = true;
+        }
+      }
+    }
+
+    return { upcoming, past, searchedByName };
   }
 
   formatAppointmentForAI(appointments) {
@@ -174,7 +210,14 @@ class MessageHandler {
   }
 
   isAskingAboutAppointment(text) {
-    const keywords = ['mi cita', 'mis citas', 'cuando es', 'cuándo es', 'fecha de mi', 'horario de mi', 'estado de mi', 'consultar cita', 'ver mis citas', 'próxima cita', 'proxima cita', 'tengo cita', 'tengo alguna', 'agendé', 'agende', 'reservé', 'reserve', 'que citas', 'qué citas', 'cuales mis', 'cuáles mis'];
+    const keywords = [
+      'mi cita', 'mis citas', 'cuando es', 'cuándo es', 'fecha de mi', 'horario de mi', 
+      'estado de mi', 'consultar cita', 'ver mis citas', 'próxima cita', 'proxima cita', 
+      'tengo cita', 'tengo alguna', 'agendé', 'agende', 'reservé', 'reserve', 
+      'que citas', 'qué citas', 'cuales mis', 'cuáles mis', 'aprobaron', 'aprobación',
+      'aprobada', 'confirmada', 'confirmar mi cita', 'a nombre de', 'nombre de',
+      'cuanto falta', 'cuánto falta', 'ya es', 'es hoy', 'es mañana'
+    ];
     const lower = text.toLowerCase();
     return keywords.some(kw => lower.includes(kw));
   }
@@ -261,11 +304,16 @@ class MessageHandler {
 
     let contextExtra = '';
     if (this.isAskingAboutAppointment(text)) {
-      const upcoming = await this.getClientAppointments(phone);
-      const past = await this.getClientPastAppointments(phone);
-      contextExtra = '\n\nINFORMACIÓN DEL CLIENTE EN BASE DE DATOS:\n';
-      contextExtra += 'Citas próximas: ' + this.formatAppointmentForAI(upcoming) + '\n';
-      contextExtra += 'Citas anteriores: ' + this.formatAppointmentForAI(past);
+      const { upcoming, past, searchedByName } = await this.getAllAppointmentsForAI(phone, text);
+      contextExtra = '\n\n=== INFORMACIÓN DE CITAS EN BASE DE DATOS ===\n';
+      contextExtra += 'Telefono del cliente que escribe: ' + phone + '\n';
+      if (searchedByName) {
+        contextExtra += '(Se encontraron citas buscando por nombre en el mensaje)\n';
+      }
+      contextExtra += 'Citas PRÓXIMAS del cliente:\n' + this.formatAppointmentForAI(upcoming) + '\n';
+      contextExtra += 'Citas ANTERIORES:\n' + this.formatAppointmentForAI(past) + '\n';
+      contextExtra += '=== FIN DE CITAS ===\n';
+      contextExtra += '\nIMPORTANTE: Si hay citas, responde con los datos EXACTOS (fecha, hora, servicio, estado). Si NO hay citas, di claramente que no se encontraron citas para ese nombre/teléfono.';
     }
 
     const aiResponse = await this.groq.chat(history, name, contextExtra);
