@@ -19,29 +19,12 @@ async function initDatabase() {
   
   try {
     await client.query(`
-      CREATE TABLE IF NOT EXISTS clients (
+      CREATE TABLE IF NOT EXISTS chat_history (
         id SERIAL PRIMARY KEY,
-        phone TEXT UNIQUE NOT NULL,
-        name TEXT DEFAULT 'Cliente',
-        email TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS appointments (
-        id SERIAL PRIMARY KEY,
-        client_id INTEGER NOT NULL REFERENCES clients(id),
-        service TEXT NOT NULL,
-        description TEXT,
-        date DATE NOT NULL,
-        time TIME NOT NULL,
-        duration_minutes INTEGER DEFAULT 60,
-        status TEXT DEFAULT 'pending',
-        notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        phone TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -56,43 +39,9 @@ async function initDatabase() {
       )
     `);
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS services (
-        id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL,
-        description TEXT,
-        duration_minutes INTEGER DEFAULT 60,
-        active INTEGER DEFAULT 1
-      )
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS chat_history (
-        id SERIAL PRIMARY KEY,
-        phone TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS blocked_times (
-        id SERIAL PRIMARY KEY,
-        date DATE NOT NULL,
-        time_start TIME NOT NULL,
-        time_end TIME NOT NULL,
-        reason TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await client.query('CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date)');
-    await client.query('CREATE INDEX IF NOT EXISTS idx_appointments_client ON appointments(client_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_chat_history_phone ON chat_history(phone)');
-    await client.query('CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone)');
 
-    console.log('✅ Base de datos PostgreSQL inicializada');
+    console.log('✅ Base de datos inicializada');
   } finally {
     client.release();
   }

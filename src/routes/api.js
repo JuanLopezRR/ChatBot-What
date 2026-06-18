@@ -213,11 +213,7 @@ router.get('/debug/clients', async (req, res) => {
 router.get('/debug/appointments', async (req, res) => {
   try {
     const appointments = await queryAll(`
-      SELECT a.*, c.name as client_name, c.phone as client_phone
-      FROM appointments a
-      JOIN clients c ON a.client_id = c.id
-      ORDER BY a.date DESC
-      LIMIT 20
+      SELECT * FROM citas ORDER BY id DESC LIMIT 20
     `);
     res.json({ total: appointments.length, appointments });
   } catch (error) {

@@ -137,42 +137,37 @@ class MessageHandler {
   async getClientAppointments(phone) {
     const today = format(new Date(), 'yyyy-MM-dd');
     return await queryAll(`
-      SELECT a.id, a.service, a.date, a.time, a.duration_minutes, a.status, a.notes
-      FROM appointments a
-      JOIN clients c ON a.client_id = c.id
-      WHERE c.phone = $1 AND a.date >= $2 AND a.status IN ('pending', 'confirmed')
-      ORDER BY a.date ASC, a.time ASC
+      SELECT id, nombre, negocio, telefono, correo, plan, fecha
+      FROM citas
+      WHERE telefono = $1
+      ORDER BY fecha DESC
       LIMIT 5
-    `, [phone, today]);
+    `, [phone]);
   }
 
   async getClientAppointmentsByName(name) {
-    const today = format(new Date(), 'yyyy-MM-dd');
     return await queryAll(`
-      SELECT a.id, a.service, a.date, a.time, a.duration_minutes, a.status, a.notes, c.name as client_name
-      FROM appointments a
-      JOIN clients c ON a.client_id = c.id
-      WHERE c.name ILIKE $1 AND a.date >= $2 AND a.status IN ('pending', 'confirmed')
-      ORDER BY a.date ASC, a.time ASC
+      SELECT id, nombre, negocio, telefono, correo, plan, fecha
+      FROM citas
+      WHERE nombre ILIKE $1
+      ORDER BY fecha DESC
       LIMIT 5
-    `, [`%${name}%`, today]);
+    `, [`%${name}%`]);
   }
 
   async getClientPastAppointments(phone) {
-    const today = format(new Date(), 'yyyy-MM-dd');
     return await queryAll(`
-      SELECT a.id, a.service, a.date, a.time, a.status
-      FROM appointments a
-      JOIN clients c ON a.client_id = c.id
-      WHERE c.phone = $1 AND (a.date < $2 OR a.status = 'completed')
-      ORDER BY a.date DESC, a.time DESC
+      SELECT id, nombre, negocio, telefono, correo, plan, fecha
+      FROM citas
+      WHERE telefono = $1
+      ORDER BY fecha DESC
       LIMIT 3
-    `, [phone, today]);
+    `, [phone]);
   }
 
   async getAllAppointmentsForAI(phone, text) {
     let upcoming = await this.getClientAppointments(phone);
-    let past = await this.getClientPastAppointments(phone);
+    let past = [];
     let searchedByName = false;
 
     if (upcoming.length === 0) {
@@ -182,10 +177,10 @@ class MessageHandler {
         upcoming = await this.getClientAppointmentsByName(searchName);
         searchedByName = true;
       } else {
-        const allClients = await queryAll('SELECT id, name, phone FROM clients ORDER BY created_at DESC LIMIT 20');
-        const nameInText = allClients.find(c => text.toLowerCase().includes(c.name.toLowerCase()));
+        const allClients = await queryAll('SELECT DISTINCT nombre, telefono FROM citas ORDER BY id DESC LIMIT 20');
+        const nameInText = allClients.find(c => text.toLowerCase().includes(c.nombre.toLowerCase()));
         if (nameInText) {
-          upcoming = await this.getClientAppointments(nameInText.phone);
+          upcoming = await this.getClientAppointments(nameInText.telefono);
           searchedByName = true;
         }
       }
@@ -195,17 +190,14 @@ class MessageHandler {
   }
 
   formatAppointmentForAI(appointments) {
-    if (!appointments || appointments.length === 0) return 'No tiene citas registradas en el sistema.';
+    if (!appointments || appointments.length === 0) return 'No se encontraron citas registradas para este nombre/teléfono.';
     return appointments.map(a => {
-      const [year, month, day] = a.date.split('-');
-      const dateDisplay = `${day}/${month}/${year}`;
-      const [h, m] = a.time.split(':').map(Number);
-      const period = h >= 12 ? 'PM' : 'AM';
-      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-      const timeDisplay = `${h12}:${m.toString().padStart(2, '0')} ${period}`;
-      const statusMap = { confirmed: 'Confirmada ✅', pending: 'Pendiente ⏳', cancelled: 'Cancelada ❌', completed: 'Completada ✅' };
-      const statusText = statusMap[a.status] || a.status;
-      return `Cita #${a.id}: ${a.service} el ${dateDisplay} a las ${timeDisplay} - ${statusText}`;
+      let fechaDisplay = a.fecha;
+      if (a.fecha && a.fecha.includes('-')) {
+        const [year, month, day] = a.fecha.split('T')[0].split('-');
+        fechaDisplay = `${day}/${month}/${year}`;
+      }
+      return `Cita #${a.id}: ${a.nombre || 'Sin nombre'} | Negocio: ${a.negocio || 'N/A'} | Plan: ${a.plan || 'N/A'} | Fecha: ${fechaDisplay}`;
     }).join('\n');
   }
 
@@ -216,7 +208,8 @@ class MessageHandler {
       'tengo cita', 'tengo alguna', 'agendé', 'agende', 'reservé', 'reserve', 
       'que citas', 'qué citas', 'cuales mis', 'cuáles mis', 'aprobaron', 'aprobación',
       'aprobada', 'confirmada', 'confirmar mi cita', 'a nombre de', 'nombre de',
-      'cuanto falta', 'cuánto falta', 'ya es', 'es hoy', 'es mañana'
+      'cuanto falta', 'cuánto falta', 'ya es', 'es hoy', 'es mañana', 'mis datos',
+      'consultar', 'verificar', 'revisar', 'info de mi', 'información de mi'
     ];
     const lower = text.toLowerCase();
     return keywords.some(kw => lower.includes(kw));
@@ -310,10 +303,12 @@ class MessageHandler {
       if (searchedByName) {
         contextExtra += '(Se encontraron citas buscando por nombre en el mensaje)\n';
       }
-      contextExtra += 'Citas PRÓXIMAS del cliente:\n' + this.formatAppointmentForAI(upcoming) + '\n';
-      contextExtra += 'Citas ANTERIORES:\n' + this.formatAppointmentForAI(past) + '\n';
+      contextExtra += 'Citas encontradas:\n' + this.formatAppointmentForAI(upcoming) + '\n';
+      if (past.length > 0) {
+        contextExtra += 'Citas anteriores:\n' + this.formatAppointmentForAI(past) + '\n';
+      }
       contextExtra += '=== FIN DE CITAS ===\n';
-      contextExtra += '\nIMPORTANTE: Si hay citas, responde con los datos EXACTOS (fecha, hora, servicio, estado). Si NO hay citas, di claramente que no se encontraron citas para ese nombre/teléfono.';
+      contextExtra += '\nIMPORTANTE: Responde con los datos EXACTOS que ves arriba. Si hay citas, muestra nombre, negocio, plan y fecha. Si NO hay citas, di claramente que no se encontraron citas para ese nombre/teléfono.';
     }
 
     const aiResponse = await this.groq.chat(history, name, contextExtra);
