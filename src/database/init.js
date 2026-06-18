@@ -92,6 +92,16 @@ async function initDatabase() {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chat_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at DATETIME DEFAULT (datetime('now'))
+    )
+  `);
+
   try {
     db.run(`CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_appointments_client ON appointments(client_id)`);
