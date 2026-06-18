@@ -7,6 +7,7 @@ const path = require('path');
 const { initDatabase, closeDb, queryOne, runSql } = require('./database/init');
 const webhookRoutes = require('./routes/webhook');
 const apiRoutes = require('./routes/api');
+const debugRoutes = require('./routes/debug');
 const { logger } = require('./utils/logger');
 
 const app = express();
@@ -21,6 +22,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 app.use('/webhook', webhookRoutes);
 app.use('/api', apiRoutes);
+app.use('/api', debugRoutes);
 
 app.get('/', (req, res) => {
   res.json({
