@@ -144,7 +144,7 @@ class MessageHandler {
     return await queryAll(`
       SELECT id, nombre, negocio, telefono, correo, plan, fecha, hora, notas, estado
       FROM citas
-      WHERE nombre ILIKE $1
+      WHERE nombre ILIKE $1 OR negocio ILIKE $1
       ORDER BY fecha DESC
       LIMIT 5
     `, [`%${name}%`]);
@@ -172,8 +172,11 @@ class MessageHandler {
         upcoming = await this.getClientAppointmentsByName(searchName);
         searchedByName = true;
       } else {
-        const allClients = await queryAll('SELECT DISTINCT nombre, telefono FROM citas ORDER BY id DESC LIMIT 20');
-        const nameInText = allClients.find(c => text.toLowerCase().includes(c.nombre.toLowerCase()));
+        const allClients = await queryAll('SELECT DISTINCT nombre, negocio, telefono FROM citas ORDER BY id DESC LIMIT 20');
+        const nameInText = allClients.find(c => 
+          text.toLowerCase().includes(c.nombre.toLowerCase()) || 
+          text.toLowerCase().includes(c.negocio.toLowerCase())
+        );
         if (nameInText) {
           upcoming = await this.getClientAppointments(nameInText.telefono);
           searchedByName = true;
