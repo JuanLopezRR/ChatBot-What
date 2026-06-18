@@ -25,13 +25,15 @@ app.use('/api', apiRoutes);
 app.get('/', (req, res) => {
   res.json({
     service: 'ChatBot WhatsApp Lopez Tech',
-    version: '1.0.0',
+    version: '1.1.0',
     status: 'running',
     database: 'postgresql',
+    build: Date.now(),
     endpoints: {
       webhook: '/webhook/whatsapp',
       health: '/api/health',
       appointments: '/api/appointments',
+      debug: '/api/debug/test',
       schedule: '/?#agendar'
     }
   });
