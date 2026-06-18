@@ -19,9 +19,11 @@ class YCloudService {
 
   async sendText(to, message) {
     try {
+      const toNumber = to.startsWith('+') ? to : `+${to}`;
+      
       const response = await this.client.post('/whatsapp/messages/sendDirectly', {
         from: YCLOUD_PHONE_NUMBER,
-        to: to,
+        to: toNumber,
         type: 'text',
         text: { body: message }
       });
