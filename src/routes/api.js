@@ -212,21 +212,30 @@ router.get('/debug/clients', async (req, res) => {
 
 router.get('/debug/appointments', async (req, res) => {
   try {
-    const appointments = await queryAll(`
-      SELECT * FROM citas ORDER BY id DESC LIMIT 20
-    `);
+    const appointments = await queryAll(`SELECT * FROM citas ORDER BY id DESC LIMIT 20`);
     res.json({ total: appointments.length, appointments });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-router.get('/debug/services', async (req, res) => {
+router.get('/debug/tables', async (req, res) => {
   try {
-    const services = await queryAll('SELECT * FROM services');
-    res.json({ total: services.length, services });
+    const tables = await queryAll(`SELECT tablename FROM pg_tables WHERE schemaname = 'public'`);
+    res.json({ tables: tables.map(t => t.tablename) });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/debug/test', async (req, res) => {
+  try {
+    await queryOne('SELECT 1 as test');
+    const url = process.env.DATABASE_URL || 'no configurada';
+    const masked = url.replace(/:([^@]+)@/, ':****@');
+    res.json({ status: 'conexion_ok', database_url: masked });
+  } catch (error) {
+    res.status(500).json({ status: 'conexion_fallo', error: error.message });
   }
 });
 
