@@ -19,7 +19,7 @@ class YCloudService {
 
   async sendText(to, message) {
     try {
-      const response = await this.client.post('/whatsapp/messages', {
+      const response = await this.client.post('/whatsapp/messages/sendDirectly', {
         from: YCLOUD_PHONE_NUMBER,
         to: to,
         type: 'text',
@@ -28,14 +28,15 @@ class YCloudService {
       logger.info(`Mensaje enviado a ${to}`);
       return response.data;
     } catch (error) {
-      logger.error(`Error enviando mensaje a ${to}: ${error.message}`);
+      const errMsg = error.response?.data?.error?.message || error.message;
+      logger.error(`Error enviando mensaje a ${to}: ${errMsg}`);
       throw error;
     }
   }
 
   async sendButtons(to, body, buttons) {
     try {
-      const response = await this.client.post('/whatsapp/messages', {
+      const response = await this.client.post('/whatsapp/messages/sendDirectly', {
         from: YCLOUD_PHONE_NUMBER,
         to: to,
         type: 'interactive',
@@ -56,14 +57,15 @@ class YCloudService {
       logger.info(`Botones enviados a ${to}`);
       return response.data;
     } catch (error) {
-      logger.error(`Error enviando botones a ${to}: ${error.message}`);
+      const errMsg = error.response?.data?.error?.message || error.message;
+      logger.error(`Error enviando botones a ${to}: ${errMsg}`);
       throw error;
     }
   }
 
   async sendList(to, body, buttonText, sections) {
     try {
-      const response = await this.client.post('/whatsapp/messages', {
+      const response = await this.client.post('/whatsapp/messages/sendDirectly', {
         from: YCLOUD_PHONE_NUMBER,
         to: to,
         type: 'interactive',
@@ -79,14 +81,15 @@ class YCloudService {
       logger.info(`Lista enviada a ${to}`);
       return response.data;
     } catch (error) {
-      logger.error(`Error enviando lista a ${to}: ${error.message}`);
+      const errMsg = error.response?.data?.error?.message || error.message;
+      logger.error(`Error enviando lista a ${to}: ${errMsg}`);
       throw error;
     }
   }
 
   async sendLocation(to, latitude, longitude, name, address) {
     try {
-      const response = await this.client.post('/whatsapp/messages', {
+      const response = await this.client.post('/whatsapp/messages/sendDirectly', {
         from: YCLOUD_PHONE_NUMBER,
         to: to,
         type: 'location',
@@ -100,60 +103,26 @@ class YCloudService {
       logger.info(`Ubicación enviada a ${to}`);
       return response.data;
     } catch (error) {
-      logger.error(`Error enviando ubicación a ${to}: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async sendImage(to, imageUrl, caption) {
-    try {
-      const response = await this.client.post('/whatsapp/messages', {
-        from: YCLOUD_PHONE_NUMBER,
-        to: to,
-        type: 'image',
-        image: {
-          link: imageUrl,
-          caption
-        }
-      });
-      logger.info(`Imagen enviada a ${to}`);
-      return response.data;
-    } catch (error) {
-      logger.error(`Error enviando imagen a ${to}: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async sendDocument(to, documentUrl, filename, caption) {
-    try {
-      const response = await this.client.post('/whatsapp/messages', {
-        from: YCLOUD_PHONE_NUMBER,
-        to: to,
-        type: 'document',
-        document: {
-          link: documentUrl,
-          filename,
-          caption
-        }
-      });
-      logger.info(`Documento enviado a ${to}`);
-      return response.data;
-    } catch (error) {
-      logger.error(`Error enviando documento a ${to}: ${error.message}`);
+      const errMsg = error.response?.data?.error?.message || error.message;
+      logger.error(`Error enviando ubicación a ${to}: ${errMsg}`);
       throw error;
     }
   }
 
   async markAsRead(messageId) {
     try {
-      await this.client.post('/whatsapp/messages', {
-        from: YCLOUD_PHONE_NUMBER,
-        to: 'status',
-        type: 'text',
-        text: { body: '' }
-      });
+      await this.client.post(`/whatsapp/inboundMessages/${messageId}/markAsRead`);
+      logger.debug(`Mensaje ${messageId} marcado como leído`);
     } catch (error) {
-      logger.error(`Error marcando mensaje como leído: ${error.message}`);
+      logger.debug(`No se pudo marcar mensaje como leído: ${error.message}`);
+    }
+  }
+
+  async typingIndicator(messageId) {
+    try {
+      await this.client.post(`/whatsapp/inboundMessages/${messageId}/typingIndicator`);
+    } catch (error) {
+      logger.debug(`No se pudo mostrar indicador de escritura: ${error.message}`);
     }
   }
 }
