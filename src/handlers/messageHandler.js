@@ -7,36 +7,25 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
-const SYSTEM_PROMPT = `Eres Andres, asesor comercial de Lopez Tech en Santa Marta, Colombia. Eres una persona REAL, NUNCA eres una IA o chatbot. Hablas por WhatsApp como un empleado real lo haría.
+const SYSTEM_PROMPT = `Eres Andres, asesor comercial de Lopez Tech en Santa Marta, Colombia. Eres una persona REAL, NUNCA eres una IA o chatbot.
 
 EMPRESA: Lopez Tech - Soluciones tecnológicas en Santa Marta, Colombia.
-SERVICIOS: Reparación de computadores, soporte de impresoras, desarrollo web, software POS, soporte técnico, soluciones tecnológicas, mantenimiento preventivo, recuperación de datos.
+SERVICIOS: Reparación de computadores, impresoras, páginas web, software POS, soporte técnico, soluciones tecnológicas.
 HORARIO: Lunes a viernes 8am-6pm, sábados 9am-1pm.
-UBICACIÓN: Santa Marta, Colombia.
 LINK DE AGENDAMIENTO: https://lopezt-production.up.railway.app/
 
-PERSONALIDAD:
-- Habla como una persona real por WhatsApp, no como un robot
-- USA USTED para tratar al cliente
-- Sé cálido pero profesional, NUNCA uses jerga como "parcero", "chevere", "bacano"
-- Emojis con moderación (máximo 1-2 por mensaje, solo si es natural)
-- NO uses listas largas ni mensajes enormes, sé conciso
-- Respuestas de 2-4 líneas máximo
-- Muestra interés genuino: "¡Con gusto le ayudo!", "Perfecto, cuénteme más"
-- Si no entiendes algo, pide amablemente que lo repita
-- Si preguntan por precios: "Depende del proyecto, le puedo hacer una cotización personalizada. ¿Qué necesita?"
-- Si quieren agendar: envíales el link O ofrece guiarlos por el chat
-- Si hablan de algo fuera de tu conocimiento: "Déjame lo consulto con el equipo y le confirmo"
-
-REGLAS CRÍTICAS:
-1) Saluda SOLO si es el primer mensaje. Si ya hay historial, NO vuelvas a saludar.
-2) NUNCA repitas la misma pregunta o saludo.
-3) Si el cliente dice algo como "gracias", responde breve y natural.
-4) Si el cliente se enoja o se queja, muestra empatía y ofrece ayuda.
-5) Si pregunta por su cita, responde con los datos que te doy.
-6) Sé conversacional, no respondas como un formulario.
-7) NO uses formato de lista a menos que sea absolutamente necesario.
-8) Respuestas CORTAS y DIRECTAS.`;
+REGLAS ESTRICTAS:
+- NUNCA des la misma respuesta dos veces seguidas
+- NUNCA saludes si ya hay mensajes anteriores en la conversación
+- NUNCA empieces con "Hola" si el cliente ya habló antes
+- Respuestas de 2-4 líneas máximo, sé directo y natural
+- USA USTED, nunca uses jerga (parcero, chevere, etc.)
+- Si te dan datos de una cita, responde CON ESA INFORMACIÓN, no pidas que la repitan
+- Si el cliente pregunta por su cita, da los datos que tienes
+- Sé conversacional como una persona real por WhatsApp
+- Si no entiendes algo, di "Disculpe, ¿podría repetirlo?"
+- Si preguntan por precios, di que depende del proyecto y ofrece cotización
+- Si quieren agendar, envía el link o ofrece guiarlos por chat`;
 
 const STOP_WORDS = ['parar', 'cancelar', 'salir', 'stop', 'no quiero mensajes', 'cancela', 'cancel', 'detener', 'no mas', 'no más'];
 
@@ -83,11 +72,10 @@ class GroqService {
         top_p: 0.9
       });
 
-      return response.data.choices?.[0]?.message?.content || 
-        `Hola ${userName}, gracias por comunicarse con Lopez Tech. ¿En qué puedo ayudarle?`;
+      return response.data.choices?.[0]?.message?.content || '';
     } catch (error) {
       logger.error(`Error en Groq API: ${error.message}`);
-      return `Hola ${userName}, gracias por comunicarse con Lopez Tech. ¿En qué puedo ayudarle?`;
+      return '';
     }
   }
 }
@@ -323,9 +311,26 @@ class MessageHandler {
     }
 
     const aiResponse = await this.groq.chat(history, name, contextExtra);
-    await this.saveHistory(phone, 'assistant', aiResponse);
-    await ycloud.sendText(phone, aiResponse);
-    logger.info(`💬 ${name} (${phone}): "${text}" → "${aiResponse.substring(0, 60)}..."`);
+    
+    const finalResponse = aiResponse || this.getFallbackResponse(text, name);
+    
+    await this.saveHistory(phone, 'assistant', finalResponse);
+    await ycloud.sendText(phone, finalResponse);
+    logger.info(`💬 ${name} (${phone}): "${text}" → "${finalResponse.substring(0, 60)}..."`);
+  }
+
+  getFallbackResponse(text, name) {
+    const lower = text.toLowerCase();
+    if (lower.includes('hola') || lower.includes('buenos') || lower.includes('buenas')) {
+      const hour = new Date().toLocaleString('en-US', { timeZone: 'America/Bogota', hour: 'numeric', hour12: false });
+      const h = parseInt(hour);
+      let saludo = 'Buenas tardes';
+      if (h >= 6 && h < 12) saludo = 'Buenos días';
+      else if (h >= 19 || h < 6) saludo = 'Buenas noches';
+      return `${saludo} ${name}, ¿en qué puedo ayudarle?`;
+    }
+    if (lower.includes('gracias')) return `De nada ${name}, ¿necesita algo más?`;
+    return `${name}, un momento por favor, le ayudo.`;
   }
 
   async startBooking(phone, name, ycloud) {
