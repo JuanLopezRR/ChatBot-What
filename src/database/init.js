@@ -41,6 +41,26 @@ async function initDatabase() {
 
     await client.query('CREATE INDEX IF NOT EXISTS idx_chat_history_phone ON chat_history(phone)');
 
+    // Columna human_mode para cuando el admin toma el control
+    await client.query(`
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS human_mode BOOLEAN DEFAULT FALSE
+    `);
+
+    // Tabla de configuración del bot
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bot_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Insertar default paused = false si no existe
+    await client.query(`
+      INSERT INTO bot_settings (key, value) VALUES ('paused', 'false')
+      ON CONFLICT (key) DO NOTHING
+    `);
+
     console.log('✅ Base de datos inicializada');
   } finally {
     client.release();
@@ -69,4 +89,18 @@ function closeDb() {
   }
 }
 
-module.exports = { initDatabase, queryAll, queryOne, runSql, closeDb };
+async function getSetting(key) {
+  const row = await queryOne('SELECT value FROM bot_settings WHERE key = $1', [key]);
+  return row ? row.value : null;
+}
+
+async function setSetting(key, value) {
+  await runSql('INSERT INTO bot_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP', [key, value]);
+}
+
+async function isBotPaused() {
+  const val = await getSetting('paused');
+  return val === 'true';
+}
+
+module.exports = { initDatabase, queryAll, queryOne, runSql, closeDb, getSetting, setSetting, isBotPaused };

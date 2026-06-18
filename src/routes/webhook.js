@@ -50,7 +50,9 @@ router.post('/whatsapp', async (req, res) => {
 
     phone = phone.replace('+', '').replace('@s.whatsapp.net', '').replace('@lid', '');
 
-    logger.info(`📱 Mensaje de ${name} (${phone}): "${text}"`);
+    const ADMIN_PHONE = (process.env.ADMIN_PHONE || '').replace(/[^0-9]/g, '');
+    const isAdmin = ADMIN_PHONE && phone.replace(/[^0-9]/g, '') === ADMIN_PHONE;
+    logger.info(`${isAdmin ? '🛡️ ADMIN' : '📱'} Mensaje de ${name} (${phone}): "${text}"`);
 
     if (messageId) {
       try {

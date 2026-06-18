@@ -1,7 +1,9 @@
 const axios = require('axios');
-const { queryAll, queryOne, runSql } = require('../database/init');
+const { queryAll, queryOne, runSql, isBotPaused, getSetting, setSetting } = require('../database/init');
 const { format, addDays } = require('date-fns');
 const { logger } = require('../utils/logger');
+
+const ADMIN_PHONE = (process.env.ADMIN_PHONE || '').replace(/[^0-9]/g, '');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -265,6 +267,86 @@ class MessageHandler {
     return days[day] || day;
   }
 
+  isAdmin(phone) {
+    const clean = phone.replace(/[^0-9]/g, '');
+    return ADMIN_PHONE && clean === ADMIN_PHONE;
+  }
+
+  async handleAdminCommand(phone, name, text, ycloud) {
+    const cmd = text.toLowerCase().trim();
+
+    if (cmd === '/pausar') {
+      await setSetting('paused', 'true');
+      await ycloud.sendText(phone, '⏸️ *Bot pausado.* Ya no responderé automáticamente a los clientes. Usa /reanudar para activarme de nuevo.');
+      return true;
+    }
+
+    if (cmd === '/reanudar') {
+      await setSetting('paused', 'false');
+      await ycloud.sendText(phone, '▶️ *Bot reanudado.* Ya estoy respondiendo a los clientes nuevamente.');
+      return true;
+    }
+
+    if (cmd === '/estado') {
+      const paused = await isBotPaused();
+      const enHumanos = await queryAll("SELECT COUNT(*) as count FROM conversations WHERE human_mode = TRUE");
+      const totalConv = await queryAll("SELECT COUNT(*) as count FROM conversations");
+      const msg = `📊 *Estado del Bot*\n\n` +
+        `⏸️ Pausado: ${paused ? 'SÍ' : 'NO'}\n` +
+        `👤 Conversaciones en modo humano: ${enHumanos[0]?.count || 0}\n` +
+        `💬 Total conversaciones: ${totalConv[0]?.count || 0}\n` +
+        `📱 Admin: ${ADMIN_PHONE || '❌ No configurado'}`;
+      await ycloud.sendText(phone, msg);
+      return true;
+    }
+
+    if (cmd.startsWith('/tomar')) {
+      const parts = cmd.split(' ');
+      let targetPhone = parts[1];
+      if (!targetPhone) {
+        const ultima = await queryOne("SELECT phone FROM conversations WHERE human_mode = FALSE ORDER BY last_message_at DESC NULLS LAST LIMIT 1");
+        if (ultima) targetPhone = ultima.phone;
+      }
+      if (targetPhone) {
+        const cleanTarget = targetPhone.replace(/[^0-9]/g, '');
+        await runSql('UPDATE conversations SET human_mode = TRUE WHERE phone = $1', [cleanTarget]);
+        await ycloud.sendText(phone, `👤 *Modo humano activado* para ${cleanTarget}. Ya no respondo a ese cliente. Usa /liberar ${cleanTarget} para devolverme el control.`);
+      } else {
+        await ycloud.sendText(phone, '❌ No encontré un cliente. Usa: /tomar 573001234567');
+      }
+      return true;
+    }
+
+    if (cmd.startsWith('/liberar')) {
+      const parts = cmd.split(' ');
+      const targetPhone = parts[1];
+      if (targetPhone) {
+        const cleanTarget = targetPhone.replace(/[^0-9]/g, '');
+        await runSql('UPDATE conversations SET human_mode = FALSE WHERE phone = $1', [cleanTarget]);
+        await ycloud.sendText(phone, `🤖 *Modo automático restaurado* para ${cleanTarget}. Vuelvo a responderle.`);
+      } else {
+        await ycloud.sendText(phone, '❌ Especifica el teléfono: /liberar 573001234567');
+      }
+      return true;
+    }
+
+    if (cmd === '/help' || cmd === '/ayuda' || cmd === '/comandos') {
+      await ycloud.sendText(phone,
+        `📋 *Comandos del Admin*\n\n` +
+        `⏸️ /pausar — Pausar el bot\n` +
+        `▶️ /reanudar — Reanudar el bot\n` +
+        `👤 /tomar [teléfono] — Tomar control de un cliente\n` +
+        `   /tomar — Tomar el último cliente\n` +
+        `🤖 /liberar [teléfono] — Devolver control al bot\n` +
+        `📊 /estado — Ver estado del bot\n` +
+        `❓ /ayuda — Ver esta ayuda`
+      );
+      return true;
+    }
+
+    return false;
+  }
+
   isStopWord(text) {
     const normalized = text.toLowerCase().trim();
     return STOP_WORDS.some(word => normalized === word || normalized.includes(word));
@@ -272,10 +354,32 @@ class MessageHandler {
 
   async handleIncoming({ phone, name, text, isGroup }) {
     if (isGroup) return;
-    
+
     const ycloud = require('../services/ycloud');
     const conv = await this.getConversationState(phone);
     const msg = text.toLowerCase().trim();
+
+    // Si es el admin, procesar comandos
+    if (this.isAdmin(phone)) {
+      const handled = await this.handleAdminCommand(phone, name, text, ycloud);
+      if (handled) {
+        await this.saveHistory(phone, 'user', text);
+        return;
+      }
+    }
+
+    // Si el bot está pausado globalmente, no responder
+    const botPaused = await isBotPaused();
+    if (botPaused && !this.isAdmin(phone)) {
+      logger.info(`⏸️ Bot pausado, ignorando mensaje de ${phone}`);
+      return;
+    }
+
+    // Si la conversación está en modo humano, bot no responde
+    if (conv.human_mode) {
+      logger.info(`👤 Modo humano activo para ${phone}, bot no responde`);
+      return;
+    }
 
     if (this.isStopWord(text)) {
       await this.resetConversation(phone);
