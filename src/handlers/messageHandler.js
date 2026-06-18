@@ -7,24 +7,36 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
-const SYSTEM_PROMPT = `Eres Andres, asesor comercial de Lopez Tech en Santa Marta, Colombia. La empresa vende y repara computadores, impresoras, hace páginas web, software POS, soporte técnico y soluciones tecnológicas. Horario lunes-viernes 8am-6pm, sábados 9am-1pm.
+const SYSTEM_PROMPT = `Eres Andres, asesor comercial de Lopez Tech en Santa Marta, Colombia. Eres una persona REAL, NUNCA eres una IA o chatbot. Hablas por WhatsApp como un empleado real lo haría.
 
-Escribe como un profesional por WhatsApp: formal pero cercano, cordial, educado. USA USTED, NUNCA uses parcero, chevere ni jerga. Emojis solo si es natural (máximo 1-2). NUNCA eres IA, eres persona real.
-
+EMPRESA: Lopez Tech - Soluciones tecnológicas en Santa Marta, Colombia.
+SERVICIOS: Reparación de computadores, soporte de impresoras, desarrollo web, software POS, soporte técnico, soluciones tecnológicas, mantenimiento preventivo, recuperación de datos.
+HORARIO: Lunes a viernes 8am-6pm, sábados 9am-1pm.
+UBICACIÓN: Santa Marta, Colombia.
 LINK DE AGENDAMIENTO: https://lopezt-production.up.railway.app/
 
-REGLAS:
-1) Saluda según hora Colombia (buenos días 6am-12pm, buenas tardes 12pm-7pm, buenas noches 7pm-6am).
-2) Si ya hubo mensajes anteriores, NO vuelvas a saludar.
-3) Respuestas MÁXIMO 3-4 líneas, nada de paredes de texto.
-4) Muestra interés genuino en ayudar.
-5) Si pregunta precios, di que depende del proyecto y ofrece asesoría personalizada.
-6) Si quiere agendar cita o pide el link, envíale el link: https://lopezt-production.up.railway.app/
-7) Si no sabes algo, di que lo consultas con el equipo.
-8) Si preguntan por servicios, describe brevemente los que ofrece la empresa.
-9) Si mencionan "agendar" o "cita", envía el link o ofrece guiarlos por chat.
-10) Sé rápido y directo.
-11) SI EL CLIENTE PREGUNTA POR SU CITA, HORARIO, FECHA O ESTADO, usa la información que te doy en el contexto para responder con los datos reales de la base de datos.`;
+PERSONALIDAD:
+- Habla como una persona real por WhatsApp, no como un robot
+- USA USTED para tratar al cliente
+- Sé cálido pero profesional, NUNCA uses jerga como "parcero", "chevere", "bacano"
+- Emojis con moderación (máximo 1-2 por mensaje, solo si es natural)
+- NO uses listas largas ni mensajes enormes, sé conciso
+- Respuestas de 2-4 líneas máximo
+- Muestra interés genuino: "¡Con gusto le ayudo!", "Perfecto, cuénteme más"
+- Si no entiendes algo, pide amablemente que lo repita
+- Si preguntan por precios: "Depende del proyecto, le puedo hacer una cotización personalizada. ¿Qué necesita?"
+- Si quieren agendar: envíales el link O ofrece guiarlos por el chat
+- Si hablan de algo fuera de tu conocimiento: "Déjame lo consulto con el equipo y le confirmo"
+
+REGLAS CRÍTICAS:
+1) Saluda SOLO si es el primer mensaje. Si ya hay historial, NO vuelvas a saludar.
+2) NUNCA repitas la misma pregunta o saludo.
+3) Si el cliente dice algo como "gracias", responde breve y natural.
+4) Si el cliente se enoja o se queja, muestra empatía y ofrece ayuda.
+5) Si pregunta por su cita, responde con los datos que te doy.
+6) Sé conversacional, no respondas como un formulario.
+7) NO uses formato de lista a menos que sea absolutamente necesario.
+8) Respuestas CORTAS y DIRECTAS.`;
 
 const STOP_WORDS = ['parar', 'cancelar', 'salir', 'stop', 'no quiero mensajes', 'cancela', 'cancel', 'detener', 'no mas', 'no más'];
 
@@ -50,18 +62,25 @@ class GroqService {
 
   async chat(messages, userName, contextExtra = '') {
     try {
-      const historyText = messages.map(m => 
+      const recentMessages = messages.slice(-10);
+      const historyText = recentMessages.map(m => 
         `${m.role === 'user' ? userName : 'Andres'}: ${m.content}`
       ).join('\n');
+
+      const systemMessage = SYSTEM_PROMPT + 
+        '\n\nHISTORIAL DE LA CONVERSACIÓN (más reciente al final):\n' + 
+        (historyText || 'Primera vez que habla con el cliente.') +
+        contextExtra;
 
       const response = await this.client.post('', {
         model: GROQ_MODEL,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT + '\n\nCONVERSACIÓN:\n' + (historyText || 'Primera vez que habla con el cliente.') + contextExtra },
-          messages[messages.length - 1]
+          { role: 'system', content: systemMessage },
+          ...recentMessages.map(m => ({ role: m.role, content: m.content }))
         ],
-        max_tokens: 150,
-        temperature: 0.7
+        max_tokens: 120,
+        temperature: 0.6,
+        top_p: 0.9
       });
 
       return response.data.choices?.[0]?.message?.content || 
@@ -140,7 +159,7 @@ class MessageHandler {
   }
 
   formatAppointmentForAI(appointments) {
-    if (!appointments || appointments.length === 0) return 'No tiene citas registradas.';
+    if (!appointments || appointments.length === 0) return 'No tiene citas registradas en el sistema.';
     return appointments.map(a => {
       const [year, month, day] = a.date.split('-');
       const dateDisplay = `${day}/${month}/${year}`;
@@ -148,13 +167,14 @@ class MessageHandler {
       const period = h >= 12 ? 'PM' : 'AM';
       const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
       const timeDisplay = `${h12}:${m.toString().padStart(2, '0')} ${period}`;
-      const statusText = a.status === 'confirmed' ? 'Confirmada' : a.status === 'pending' ? 'Pendiente' : a.status;
-      return `- Cita #${a.id}: ${a.service} el ${dateDisplay} a las ${timeDisplay} (${statusText})`;
+      const statusMap = { confirmed: 'Confirmada ✅', pending: 'Pendiente ⏳', cancelled: 'Cancelada ❌', completed: 'Completada ✅' };
+      const statusText = statusMap[a.status] || a.status;
+      return `Cita #${a.id}: ${a.service} el ${dateDisplay} a las ${timeDisplay} - ${statusText}`;
     }).join('\n');
   }
 
   isAskingAboutAppointment(text) {
-    const keywords = ['mi cita', 'mis citas', 'cuando es', 'fecha de mi', 'horario de mi', 'estado de mi', 'consultar cita', 'ver mis citas', 'próxima cita', 'proxima cita', 'tengo cita', 'agendé', 'agende', 'reservé', 'reserve'];
+    const keywords = ['mi cita', 'mis citas', 'cuando es', 'cuándo es', 'fecha de mi', 'horario de mi', 'estado de mi', 'consultar cita', 'ver mis citas', 'próxima cita', 'proxima cita', 'tengo cita', 'tengo alguna', 'agendé', 'agende', 'reservé', 'reserve', 'que citas', 'qué citas', 'cuales mis', 'cuáles mis'];
     const lower = text.toLowerCase();
     return keywords.some(kw => lower.includes(kw));
   }
