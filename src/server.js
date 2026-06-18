@@ -8,14 +8,16 @@ const webhookRoutes = require('./routes/webhook');
 const apiRoutes = require('./routes/api');
 const { logger } = require('./utils/logger');
 
+const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, '../public')));
 
 app.use('/webhook', webhookRoutes);
 app.use('/api', apiRoutes);

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agendar Cita - Lopez Tech</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { background: white; border-radius: 20px; padding: 40px; max-width: 500px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { color: #1a1a2e; font-size: 24px; margin-bottom: 5px; }
+        .header p { color: #666; font-size: 14px; }
+        .logo { font-size: 40px; margin-bottom: 10px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; color: #333; font-weight: 600; margin-bottom: 8px; font-size: 14px; }
+        .form-group input, .form-group select { width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; transition: border-color 0.3s; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #0066cc; }
+        .btn { width: 100%; padding: 15px; background: linear-gradient(135deg, #0066cc 0%, #004499 100%); color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,102,204,0.4); }
+        .btn:disabled { background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; }
+        .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+        .slot { padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; text-align: center; cursor: pointer; transition: all 0.2s; font-size: 14px; }
+        .slot:hover { border-color: #0066cc; background: #f0f7ff; }
+        .slot.selected { border-color: #0066cc; background: #0066cc; color: white; }
+        .slot.unavailable { background: #f5f5f5; color: #999; cursor: not-allowed; border-color: #e0e0e0; }
+        .message { padding: 15px; border-radius: 10px; margin-top: 20px; text-align: center; display: none; }
+        .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; display: block; }
+        .message.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; display: block; }
+        .loading { text-align: center; padding: 20px; }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #0066cc; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .whatsapp-btn { display: block; width: 100%; padding: 15px; background: #25d366; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 15px; text-decoration: none; text-align: center; }
+        .whatsapp-btn:hover { background: #20ba5a; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">💻</div>
+            <h1>Lopez Tech</h1>
+            <p>Agenda tu cita en línea</p>
+        </div>
+
+        <form id="appointmentForm">
+            <div class="form-group">
+                <label>Nombre completo</label>
+                <input type="text" id="name" placeholder="Tu nombre" required>
+            </div>
+
+            <div class="form-group">
+                <label>Teléfono (WhatsApp)</label>
+                <input type="tel" id="phone" placeholder="Ej: 3001234567" required>
+            </div>
+
+            <div class="form-group">
+                <label>Servicio</label>
+                <select id="service" required>
+                    <option value="">Selecciona un servicio</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Fecha</label>
+                <input type="date" id="date" required>
+            </div>
+
+            <div class="form-group">
+                <label>Horario disponible</label>
+                <div id="slotsContainer" class="slots">
+                    <p style="grid-column: span 3; color: #999; text-align: center;">Selecciona una fecha primero</p>
+                </div>
+            </div>
+
+            <button type="submit" class="btn" id="submitBtn" disabled>Confirmar Cita</button>
+        </form>
+
+        <div id="message" class="message"></div>
+
+        <a href="https://wa.me/573215151950?text=Hola,%20quiero%20agendar%20una%20cita" class="whatsapp-btn" target="_blank">
+            📱 Agendar por WhatsApp
+        </a>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin;
+        let services = [];
+        let selectedSlot = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadServices();
+            setupDateListener();
+            setupFormListener();
+        });
+
+        async function loadServices() {
+            try {
+                const res = await fetch(`${API_URL}/api/services`);
+                const data = await res.json();
+                services = data.services;
+                const select = document.getElementById('service');
+                services.forEach(svc => {
+                    const opt = document.createElement('option');
+                    opt.value = svc.id;
+                    opt.textContent = `${svc.name} (${svc.duration_minutes} min)`;
+                    select.appendChild(opt);
+                });
+            } catch (e) {
+                console.error('Error cargando servicios:', e);
+            }
+        }
+
+        function setupDateListener() {
+            const dateInput = document.getElementById('date');
+            const today = new Date();
+            dateInput.min = today.toISOString().split('T')[0];
+            
+            const maxDate = new Date();
+            maxDate.setDate(maxDate.getDate() + 7);
+            dateInput.max = maxDate.toISOString().split('T')[0];
+
+            dateInput.addEventListener('change', loadSlots);
+        }
+
+        async function loadSlots() {
+            const date = document.getElementById('date').value;
+            const serviceId = document.getElementById('service').value;
+            
+            if (!date || !serviceId) return;
+
+            const container = document.getElementById('slotsContainer');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Cargando horarios...</p></div>';
+
+            try {
+                const res = await fetch(`${API_URL}/api/slots?date=${date}&service_id=${serviceId}`);
+                const data = await res.json();
+
+                if (data.slots.length === 0) {
+                    container.innerHTML = '<p style="grid-column: span 3; color: #999; text-align: center;">No hay horarios disponibles</p>';
+                    return;
+                }
+
+                container.innerHTML = '';
+                data.slots.forEach(slot => {
+                    const div = document.createElement('div');
+                    div.className = 'slot';
+                    div.textContent = formatTime(slot.start);
+                    div.onclick = () => selectSlot(slot, div);
+                    container.appendChild(div);
+                });
+            } catch (e) {
+                container.innerHTML = '<p style="grid-column: span 3; color: red; text-align: center;">Error cargando horarios</p>';
+            }
+        }
+
+        function selectSlot(slot, element) {
+            document.querySelectorAll('.slot').forEach(s => s.classList.remove('selected'));
+            element.classList.add('selected');
+            selectedSlot = slot;
+            document.getElementById('submitBtn').disabled = false;
+        }
+
+        function formatTime(time24) {
+            const [h, m] = time24.split(':');
+            const hour = parseInt(h);
+            const period = hour >= 12 ? 'PM' : 'AM';
+            const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+            return `${h12}:${m} ${period}`;
+        }
+
+        function setupFormListener() {
+            document.getElementById('appointmentForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                if (!selectedSlot) return;
+
+                const btn = document.getElementById('submitBtn');
+                btn.disabled = true;
+                btn.textContent = 'Agendando...';
+
+                const data = {
+                    client_name: document.getElementById('name').value,
+                    client_phone: '57' + document.getElementById('phone').value,
+                    service_name: services.find(s => s.id == document.getElementById('service').value).name,
+                    date: document.getElementById('date').value,
+                    time: selectedSlot.start
+                };
+
+                try {
+                    const res = await fetch(`${API_URL}/api/appointments`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+
+                    const result = await res.json();
+
+                    if (res.ok) {
+                        document.getElementById('message').className = 'message success';
+                        document.getElementById('message').textContent = `✅ Cita agendada exitosamente. Número de cita: #${result.id}`;
+                        document.getElementById('appointmentForm').reset();
+                        document.getElementById('slotsContainer').innerHTML = '<p style="grid-column: span 3; color: #999; text-align: center;">Selecciona una fecha primero</p>';
+                        selectedSlot = null;
+                    } else {
+                        throw new Error(result.error || 'Error agendando cita');
+                    }
+                } catch (e) {
+                    document.getElementById('message').className = 'message error';
+                    document.getElementById('message').textContent = `❌ ${e.message}`;
+                }
+
+                btn.disabled = false;
+                btn.textContent = 'Confirmar Cita';
+            });
+        }
+    </script>
+</body>
+</html>
