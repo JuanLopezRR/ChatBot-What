@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const { initDatabase, closeDb } = require('./database/init');
+const { initDatabase, closeDb, queryOne, runSql } = require('./database/init');
 const webhookRoutes = require('./routes/webhook');
 const apiRoutes = require('./routes/api');
 const { logger } = require('./utils/logger');
@@ -45,6 +45,25 @@ async function start() {
   try {
     await initDatabase();
     logger.info('Base de datos inicializada');
+
+    const SERVICES = [
+      { name: 'Reparación de Computadores', description: 'Diagnóstico y reparación de PCs', duration_minutes: 90 },
+      { name: 'Soporte de Impresoras', description: 'Instalación y reparación de impresoras', duration_minutes: 60 },
+      { name: 'Desarrollo Web', description: 'Diseño y desarrollo de páginas web', duration_minutes: 120 },
+      { name: 'Software POS', description: 'Software punto de venta', duration_minutes: 90 },
+      { name: 'Soporte Técnico General', description: 'Asesoría técnica especializada', duration_minutes: 45 },
+      { name: 'Soluciones Tecnológicas', description: 'Consultoría IT', duration_minutes: 60 },
+      { name: 'Mantenimiento Preventivo', description: 'Limpieza y optimización de equipos', duration_minutes: 60 },
+      { name: 'Recuperación de Datos', description: 'Recuperación de información', duration_minutes: 120 }
+    ];
+
+    for (const svc of SERVICES) {
+      const existing = queryOne('SELECT id FROM services WHERE name = ?', [svc.name]);
+      if (!existing) {
+        runSql('INSERT INTO services (name, description, duration_minutes) VALUES (?, ?, ?)', [svc.name, svc.description, svc.duration_minutes]);
+      }
+    }
+    logger.info('Servicios verificados');
     
     app.listen(PORT, () => {
       logger.info(`Servidor ChatBot ejecutándose en puerto ${PORT}`);
