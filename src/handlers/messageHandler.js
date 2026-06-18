@@ -106,17 +106,18 @@ class MessageHandler {
 
   async handleIncoming({ phone, name, text, isGroup }) {
     if (isGroup) return;
+    
+    const ycloud = require('../services/ycloud');
+
     if (this.isStopWord(text)) {
-      const { sendText } = require('../services/ycloud');
-      await sendText(phone, `Entendido, ${name}. No volveremos a escribirle. Si en el futuro necesita nuestros servicios, puede contactarnos cuando quiera. ¡Éxitos! 🤝`);
+      await ycloud.sendText(phone, `Entendido, ${name}. No volveremos a escribirle. Si en el futuro necesita nuestros servicios, puede contactarnos cuando quiera. ¡Éxitos! 🤝`);
       this.saveHistory(phone, 'user', text);
       this.saveHistory(phone, 'assistant', `Opt-out confirmado. No volverá a contactar.`);
       return;
     }
 
     if (!this.isInBusinessHours()) {
-      const { sendText } = require('../services/ycloud');
-      await sendText(phone, `Hola ${name}, gracias por escribirnos. Nuestro horario de atención es lunes a viernes de 8am a 6pm y sábados de 9am a 1pm. Con gusto le atendemos dentro de nuestro horario. 🕐`);
+      await ycloud.sendText(phone, `Hola ${name}, gracias por escribirnos. Nuestro horario de atención es lunes a viernes de 8am a 6pm y sábados de 9am a 1pm. Con gusto le atendemos dentro de nuestro horario. 🕐`);
       return;
     }
 
@@ -129,8 +130,7 @@ class MessageHandler {
 
     this.saveHistory(phone, 'assistant', aiResponse);
 
-    const { sendText } = require('../services/ycloud');
-    await sendText(phone, aiResponse);
+    await ycloud.sendText(phone, aiResponse);
 
     logger.info(`💬 ${name} (${phone}): "${text}" → IA: "${aiResponse.substring(0, 50)}..."`);
   }
