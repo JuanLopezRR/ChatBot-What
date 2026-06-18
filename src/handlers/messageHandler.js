@@ -135,19 +135,26 @@ class MessageHandler {
   }
 
   async getClientAppointments(phone) {
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const phoneVariants = [
+      phone,
+      phone.replace(/^57/, ''),
+      '57' + phone.replace(/^57/, ''),
+      phone.replace(/^0/, ''),
+      '57' + phone.replace(/^0/, '')
+    ];
+    const uniquePhones = [...new Set(phoneVariants)];
     return await queryAll(`
-      SELECT id, nombre, negocio, telefono, correo, plan, fecha
+      SELECT id, nombre, negocio, telefono, correo, plan, fecha, hora, notas, estado
       FROM citas
-      WHERE telefono = $1
+      WHERE telefono = ANY($1)
       ORDER BY fecha DESC
       LIMIT 5
-    `, [phone]);
+    `, [uniquePhones]);
   }
 
   async getClientAppointmentsByName(name) {
     return await queryAll(`
-      SELECT id, nombre, negocio, telefono, correo, plan, fecha
+      SELECT id, nombre, negocio, telefono, correo, plan, fecha, hora, notas, estado
       FROM citas
       WHERE nombre ILIKE $1
       ORDER BY fecha DESC
@@ -157,12 +164,12 @@ class MessageHandler {
 
   async getClientPastAppointments(phone) {
     return await queryAll(`
-      SELECT id, nombre, negocio, telefono, correo, plan, fecha
+      SELECT id, nombre, negocio, telefono, correo, plan, fecha, hora, notas, estado
       FROM citas
-      WHERE telefono = $1
+      WHERE telefono = ANY($1)
       ORDER BY fecha DESC
       LIMIT 3
-    `, [phone]);
+    `, [[phone, phone.replace(/^57/, ''), '57' + phone.replace(/^57/, '')]]);
   }
 
   async getAllAppointmentsForAI(phone, text) {
@@ -197,7 +204,9 @@ class MessageHandler {
         const [year, month, day] = a.fecha.split('T')[0].split('-');
         fechaDisplay = `${day}/${month}/${year}`;
       }
-      return `Cita #${a.id}: ${a.nombre || 'Sin nombre'} | Negocio: ${a.negocio || 'N/A'} | Plan: ${a.plan || 'N/A'} | Fecha: ${fechaDisplay}`;
+      const hora = a.hora || 'Sin hora';
+      const estado = a.estado || 'Sin estado';
+      return `Cita #${a.id}: ${a.nombre || 'N/A'} | Negocio: ${a.negocio || 'N/A'} | Plan: ${a.plan || 'N/A'} | Fecha: ${fechaDisplay} | Hora: ${hora} | Estado: ${estado}`;
     }).join('\n');
   }
 
@@ -209,7 +218,9 @@ class MessageHandler {
       'que citas', 'qué citas', 'cuales mis', 'cuáles mis', 'aprobaron', 'aprobación',
       'aprobada', 'confirmada', 'confirmar mi cita', 'a nombre de', 'nombre de',
       'cuanto falta', 'cuánto falta', 'ya es', 'es hoy', 'es mañana', 'mis datos',
-      'consultar', 'verificar', 'revisar', 'info de mi', 'información de mi'
+      'consultar', 'verificar', 'revisar', 'info de mi', 'información de mi',
+      'sobre mi cita', 'de mi cita', 'cita de', 'cuando mi', 'cuándo mi',
+      'que hora', 'qué hora', 'a que hora', 'a qué hora', 'hora de mi'
     ];
     const lower = text.toLowerCase();
     return keywords.some(kw => lower.includes(kw));
