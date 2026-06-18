@@ -23,7 +23,8 @@ REGLAS:
 7) Si no sabes algo, di que lo consultas con el equipo.
 8) Si preguntan por servicios, describe brevemente los que ofrece la empresa.
 9) Si mencionan "agendar" o "cita", envía el link o ofrece guiarlos por chat.
-10) Sé rápido y directo.`;
+10) Sé rápido y directo.
+11) SI EL CLIENTE PREGUNTA POR SU CITA, HORARIO, FECHA O ESTADO, usa la información que te doy en el contexto para responder con los datos reales de la base de datos.`;
 
 const STOP_WORDS = ['parar', 'cancelar', 'salir', 'stop', 'no quiero mensajes', 'cancela', 'cancel', 'detener', 'no mas', 'no más'];
 
@@ -47,7 +48,7 @@ class GroqService {
     });
   }
 
-  async chat(messages, userName) {
+  async chat(messages, userName, contextExtra = '') {
     try {
       const historyText = messages.map(m => 
         `${m.role === 'user' ? userName : 'Andres'}: ${m.content}`
@@ -56,7 +57,7 @@ class GroqService {
       const response = await this.client.post('', {
         model: GROQ_MODEL,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT + '\n\nCONVERSACIÓN:\n' + (historyText || 'Primera vez que habla con el cliente.') },
+          { role: 'system', content: SYSTEM_PROMPT + '\n\nCONVERSACIÓN:\n' + (historyText || 'Primera vez que habla con el cliente.') + contextExtra },
           messages[messages.length - 1]
         ],
         max_tokens: 150,
@@ -112,6 +113,50 @@ class MessageHandler {
 
   async getServices() {
     return await queryAll('SELECT * FROM services WHERE active = 1 ORDER BY name');
+  }
+
+  async getClientAppointments(phone) {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    return await queryAll(`
+      SELECT a.id, a.service, a.date, a.time, a.duration_minutes, a.status, a.notes
+      FROM appointments a
+      JOIN clients c ON a.client_id = c.id
+      WHERE c.phone = $1 AND a.date >= $2 AND a.status IN ('pending', 'confirmed')
+      ORDER BY a.date ASC, a.time ASC
+      LIMIT 5
+    `, [phone, today]);
+  }
+
+  async getClientPastAppointments(phone) {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    return await queryAll(`
+      SELECT a.id, a.service, a.date, a.time, a.status
+      FROM appointments a
+      JOIN clients c ON a.client_id = c.id
+      WHERE c.phone = $1 AND (a.date < $2 OR a.status = 'completed')
+      ORDER BY a.date DESC, a.time DESC
+      LIMIT 3
+    `, [phone, today]);
+  }
+
+  formatAppointmentForAI(appointments) {
+    if (!appointments || appointments.length === 0) return 'No tiene citas registradas.';
+    return appointments.map(a => {
+      const [year, month, day] = a.date.split('-');
+      const dateDisplay = `${day}/${month}/${year}`;
+      const [h, m] = a.time.split(':').map(Number);
+      const period = h >= 12 ? 'PM' : 'AM';
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      const timeDisplay = `${h12}:${m.toString().padStart(2, '0')} ${period}`;
+      const statusText = a.status === 'confirmed' ? 'Confirmada' : a.status === 'pending' ? 'Pendiente' : a.status;
+      return `- Cita #${a.id}: ${a.service} el ${dateDisplay} a las ${timeDisplay} (${statusText})`;
+    }).join('\n');
+  }
+
+  isAskingAboutAppointment(text) {
+    const keywords = ['mi cita', 'mis citas', 'cuando es', 'fecha de mi', 'horario de mi', 'estado de mi', 'consultar cita', 'ver mis citas', 'próxima cita', 'proxima cita', 'tengo cita', 'agendé', 'agende', 'reservé', 'reserve'];
+    const lower = text.toLowerCase();
+    return keywords.some(kw => lower.includes(kw));
   }
 
   async getAvailableSlots(dateStr, serviceId) {
@@ -194,7 +239,16 @@ class MessageHandler {
     history.push({ role: 'user', content: text });
     await this.saveHistory(phone, 'user', text);
 
-    const aiResponse = await this.groq.chat(history, name);
+    let contextExtra = '';
+    if (this.isAskingAboutAppointment(text)) {
+      const upcoming = await this.getClientAppointments(phone);
+      const past = await this.getClientPastAppointments(phone);
+      contextExtra = '\n\nINFORMACIÓN DEL CLIENTE EN BASE DE DATOS:\n';
+      contextExtra += 'Citas próximas: ' + this.formatAppointmentForAI(upcoming) + '\n';
+      contextExtra += 'Citas anteriores: ' + this.formatAppointmentForAI(past);
+    }
+
+    const aiResponse = await this.groq.chat(history, name, contextExtra);
     await this.saveHistory(phone, 'assistant', aiResponse);
     await ycloud.sendText(phone, aiResponse);
     logger.info(`💬 ${name} (${phone}): "${text}" → "${aiResponse.substring(0, 60)}..."`);
