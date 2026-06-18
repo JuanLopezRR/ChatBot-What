@@ -7,7 +7,10 @@ router.post('/whatsapp', async (req, res) => {
   try {
     const body = req.body;
 
-    logger.debug('Webhook recibido:', JSON.stringify(body, null, 2));
+    logger.info('════════════════════════════════════════');
+    logger.info('📩 WEBHOOK RECIBIDO:');
+    logger.info(JSON.stringify(body, null, 2));
+    logger.info('════════════════════════════════════════');
 
     res.sendStatus(200);
 
@@ -17,16 +20,28 @@ router.post('/whatsapp', async (req, res) => {
     let isGroup = false;
     let messageId = null;
 
-    if (body.event === 'whatsapp.message.received') {
-      const msg = body.data;
-      if (!msg || msg.fromMe) return;
+    const event = body.event || '';
+    const type = body.type || '';
 
-      phone = msg.from;
-      name = msg.pushName || 'Cliente';
-      text = msg.text?.body || '';
-      isGroup = msg.remoteJid?.includes('@g.us') || false;
-      messageId = msg.id;
-    } else if (body.object === 'whatsapp_business_account') {
+    logger.info(`Evento: "${event}" | Tipo: "${type}"`);
+
+    if (event.includes('message') || event.includes('received')) {
+      const msg = body.data || {};
+      
+      if (msg.fromMe === true || msg.fromMe === 'true') {
+        logger.info('Mensaje propio, ignorando');
+        return;
+      }
+
+      phone = msg.from || msg.key?.remoteJid || msg.remoteJid;
+      name = msg.pushName || msg.pushName || 'Cliente';
+      text = msg.text?.body || msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+      isGroup = phone?.includes('@g.us') || false;
+      messageId = msg.id || msg.key?.id;
+
+      logger.info(`Extraído - Phone: ${phone}, Name: ${name}, Text: "${text}", IsGroup: ${isGroup}`);
+    } 
+    else if (body.object === 'whatsapp_business_account') {
       const entry = body.entry?.[0];
       const changes = entry?.changes?.[0];
       const value = changes?.value;
@@ -39,18 +54,26 @@ router.post('/whatsapp', async (req, res) => {
         isGroup = false;
         messageId = msg.id;
       }
-    } else if (body.type === 'message') {
-      phone = body.data?.key?.remoteJid || body.from;
-      name = body.data?.pushName || body.pushName || 'Cliente';
-      text = body.data?.message?.conversation || 
-             body.data?.message?.extendedTextMessage?.text || 
-             body.text || '';
+    }
+    else if (body.from && body.text) {
+      phone = body.from;
+      name = body.pushName || body.name || 'Cliente';
+      text = body.text;
+      isGroup = body.from?.includes('@g.us') || false;
+      messageId = body.id;
+    }
+    else if (body.key || body.message) {
+      const msg = body;
+      phone = msg.key?.remoteJid || msg.from;
+      name = msg.pushName || 'Cliente';
+      text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
       isGroup = phone?.includes('@g.us') || false;
-      messageId = body.data?.key?.id;
+      messageId = msg.key?.id;
     }
 
     if (!phone || !text) {
-      logger.debug('Mensaje sin phone o text, ignorando');
+      logger.warn(`No se pudo extraer datos - phone: ${phone}, text: "${text}"`);
+      logger.warn('Body completo: ' + JSON.stringify(body));
       return;
     }
 
