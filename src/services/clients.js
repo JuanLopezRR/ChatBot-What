@@ -1,52 +1,41 @@
 const { queryAll, queryOne, runSql } = require('../database/init');
-const { logger } = require('../utils/logger');
 
 class ClientService {
-  getOrCreateClient(phone, name = 'Cliente') {
-    let client = queryOne('SELECT * FROM clients WHERE phone = ?', [phone]);
+  async getOrCreateClient(phone, name = 'Cliente') {
+    let client = await queryOne('SELECT * FROM clients WHERE phone = $1', [phone]);
     
     if (!client) {
-      const result = runSql('INSERT INTO clients (phone, name) VALUES (?, ?)', [phone, name]);
-      client = queryOne('SELECT * FROM clients WHERE id = ?', [result.lastId]);
-      logger.info(`Nuevo cliente registrado: ${phone} (${name})`);
+      const result = await runSql('INSERT INTO clients (phone, name) VALUES ($1, $2) RETURNING id', [phone, name]);
+      client = await queryOne('SELECT * FROM clients WHERE id = $1', [result.lastId]);
     } else if (client.name === 'Cliente' && name !== 'Cliente') {
-      runSql('UPDATE clients SET name = ?, updated_at = datetime(\'now\') WHERE id = ?', [name, client.id]);
+      await runSql('UPDATE clients SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [name, client.id]);
       client.name = name;
     }
     
     return client;
   }
 
-  getClientByPhone(phone) {
-    return queryOne('SELECT * FROM clients WHERE phone = ?', [phone]);
+  async getClientByPhone(phone) {
+    return await queryOne('SELECT * FROM clients WHERE phone = $1', [phone]);
   }
 
-  updateClient(phone, data) {
+  async updateClient(phone, data) {
     const fields = [];
     const values = [];
+    let idx = 1;
     
-    if (data.name) { fields.push('name = ?'); values.push(data.name); }
-    if (data.email) { fields.push('email = ?'); values.push(data.email); }
+    if (data.name) { fields.push(`name = $${idx}`); values.push(data.name); idx++; }
+    if (data.email) { fields.push(`email = $${idx}`); values.push(data.email); idx++; }
     
     if (fields.length > 0) {
-      fields.push("updated_at = datetime('now')");
+      fields.push('updated_at = CURRENT_TIMESTAMP');
       values.push(phone);
-      runSql(`UPDATE clients SET ${fields.join(', ')} WHERE phone = ?`, values);
+      await runSql(`UPDATE clients SET ${fields.join(', ')} WHERE phone = $${idx}`, values);
     }
   }
 
-  getAllClients(limit = 50) {
-    return queryAll('SELECT * FROM clients ORDER BY created_at DESC LIMIT ?', [limit]);
-  }
-
-  getClientStats() {
-    return queryOne(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN created_at > datetime('now', '-7 days') THEN 1 ELSE 0 END) as new_this_week,
-        SUM(CASE WHEN created_at > datetime('now', '-30 days') THEN 1 ELSE 0 END) as new_this_month
-      FROM clients
-    `);
+  async getAllClients(limit = 50) {
+    return await queryAll('SELECT * FROM clients ORDER BY created_at DESC LIMIT $1', [limit]);
   }
 }
 

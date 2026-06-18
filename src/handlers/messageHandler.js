@@ -19,22 +19,20 @@ REGLAS:
 3) Respuestas MÁXIMO 3-4 líneas, nada de paredes de texto.
 4) Muestra interés genuino en ayudar.
 5) Si pregunta precios, di que depende del proyecto y ofrece asesoría personalizada.
-6) Si quiere agendar cita o pide el link, envíale el link de agendamiento: https://lopezt-production.up.railway.app/
+6) Si quiere agendar cita o pide el link, envíale el link: https://lopezt-production.up.railway.app/
 7) Si no sabes algo, di que lo consultas con el equipo.
 8) Si preguntan por servicios, describe brevemente los que ofrece la empresa.
-9) Si mencionan "agendar" o "cita", puedes enviarles el link o ofrecer guiarlos por el chat.
-10) Sé rápido y directo, no des vueltas.`;
+9) Si mencionan "agendar" o "cita", envía el link o ofrece guiarlos por chat.
+10) Sé rápido y directo.`;
 
 const STOP_WORDS = ['parar', 'cancelar', 'salir', 'stop', 'no quiero mensajes', 'cancela', 'cancel', 'detener', 'no mas', 'no más'];
 
 const BOOKING_STATES = {
   IDLE: 'idle',
-  MENU: 'menu',
   BOOKING_SERVICE: 'booking_service',
   BOOKING_DATE: 'booking_date',
   BOOKING_TIME: 'booking_time',
-  BOOKING_CONFIRM: 'booking_confirm',
-  CANCELLING: 'cancelling'
+  BOOKING_CONFIRM: 'booking_confirm'
 };
 
 class GroqService {
@@ -79,54 +77,55 @@ class MessageHandler {
     this.groq = new GroqService();
   }
 
-  getConversationState(phone) {
-    let conv = queryOne('SELECT * FROM conversations WHERE phone = ?', [phone]);
+  async getConversationState(phone) {
+    let conv = await queryOne('SELECT * FROM conversations WHERE phone = $1', [phone]);
     if (!conv) {
-      runSql('INSERT INTO conversations (phone, state, context) VALUES (?, ?, ?)', [phone, BOOKING_STATES.IDLE, '{}']);
-      conv = queryOne('SELECT * FROM conversations WHERE phone = ?', [phone]);
+      await runSql('INSERT INTO conversations (phone, state, context) VALUES ($1, $2, $3)', [phone, BOOKING_STATES.IDLE, '{}']);
+      conv = await queryOne('SELECT * FROM conversations WHERE phone = $1', [phone]);
     }
     return { ...conv, context: JSON.parse(conv.context || '{}') };
   }
 
-  setConversationState(phone, state, context = {}) {
-    runSql('UPDATE conversations SET state = ?, context = ?, last_message_at = datetime(\'now\') WHERE phone = ?', [state, JSON.stringify(context), phone]);
+  async setConversationState(phone, state, context = {}) {
+    await runSql('UPDATE conversations SET state = $1, context = $2, last_message_at = CURRENT_TIMESTAMP WHERE phone = $3', [state, JSON.stringify(context), phone]);
   }
 
-  resetConversation(phone) {
-    this.setConversationState(phone, BOOKING_STATES.IDLE, {});
+  async resetConversation(phone) {
+    await this.setConversationState(phone, BOOKING_STATES.IDLE, {});
   }
 
-  getHistory(phone) {
-    return queryAll(
-      "SELECT role, content FROM chat_history WHERE phone = ? ORDER BY id ASC",
+  async getHistory(phone) {
+    const history = await queryAll(
+      "SELECT role, content FROM chat_history WHERE phone = $1 ORDER BY id ASC",
       [phone]
-    ).slice(-20);
+    );
+    return history.slice(-20);
   }
 
-  saveHistory(phone, role, content) {
-    runSql("INSERT INTO chat_history (phone, role, content) VALUES (?, ?, ?)", [phone, role, content]);
-    const count = queryOne("SELECT COUNT(*) as count FROM chat_history WHERE phone = ?", [phone]);
+  async saveHistory(phone, role, content) {
+    await runSql("INSERT INTO chat_history (phone, role, content) VALUES ($1, $2, $3)", [phone, role, content]);
+    const count = await queryOne("SELECT COUNT(*) as count FROM chat_history WHERE phone = $1", [phone]);
     if (count.count > 50) {
-      runSql("DELETE FROM chat_history WHERE phone = ? AND id NOT IN (SELECT id FROM chat_history WHERE phone = ? ORDER BY id DESC LIMIT 30)", [phone, phone]);
+      await runSql("DELETE FROM chat_history WHERE id NOT IN (SELECT id FROM chat_history WHERE phone = $1 ORDER BY id DESC LIMIT 30)", [phone]);
     }
   }
 
-  getServices() {
-    return queryAll('SELECT * FROM services WHERE active = 1 ORDER BY name');
+  async getServices() {
+    return await queryAll('SELECT * FROM services WHERE active = 1 ORDER BY name');
   }
 
-  getAvailableSlots(dateStr, serviceId) {
+  async getAvailableSlots(dateStr, serviceId) {
     const date = new Date(dateStr + 'T12:00:00');
     const dayOfWeek = date.getDay();
     
     if (dayOfWeek === 0) return [];
     
     const hours = dayOfWeek === 6 ? { start: 9, end: 13 } : { start: 8, end: 18 };
-    const service = queryOne('SELECT duration_minutes FROM services WHERE id = ?', [serviceId]);
+    const service = await queryOne('SELECT duration_minutes FROM services WHERE id = $1', [serviceId]);
     const duration = service ? service.duration_minutes : 60;
     
-    const blocked = queryAll('SELECT time_start, time_end FROM blocked_times WHERE date = ?', [dateStr]);
-    const appointments = queryAll("SELECT time, duration_minutes FROM appointments WHERE date = ? AND status != 'cancelled'", [dateStr]);
+    const blocked = await queryAll('SELECT time_start, time_end FROM blocked_times WHERE date = $1', [dateStr]);
+    const appointments = await queryAll("SELECT time, duration_minutes FROM appointments WHERE date = $1 AND status != 'cancelled'", [dateStr]);
     
     const slots = [];
     const startMinutes = hours.start * 60;
@@ -158,6 +157,11 @@ class MessageHandler {
     return `${h12}:${m.toString().padStart(2, '0')} ${period}`;
   }
 
+  translateDay(day) {
+    const days = { 'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles', 'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo' };
+    return days[day] || day;
+  }
+
   isStopWord(text) {
     const normalized = text.toLowerCase().trim();
     return STOP_WORDS.some(word => normalized === word || normalized.includes(word));
@@ -167,14 +171,14 @@ class MessageHandler {
     if (isGroup) return;
     
     const ycloud = require('../services/ycloud');
-    const conv = this.getConversationState(phone);
+    const conv = await this.getConversationState(phone);
     const msg = text.toLowerCase().trim();
 
     if (this.isStopWord(text)) {
-      this.resetConversation(phone);
+      await this.resetConversation(phone);
       await ycloud.sendText(phone, `Entendido, ${name}. No volveremos a escribirle. Si en el futuro necesita nuestros servicios, puede contactarnos cuando quiera. ¡Éxitos! 🤝`);
-      this.saveHistory(phone, 'user', text);
-      this.saveHistory(phone, 'assistant', `Opt-out confirmado.`);
+      await this.saveHistory(phone, 'user', text);
+      await this.saveHistory(phone, 'assistant', `Opt-out confirmado.`);
       return;
     }
 
@@ -182,26 +186,22 @@ class MessageHandler {
       return this.startBooking(phone, name, ycloud);
     }
 
-    if (msg === 'menu' || msg === 'inicio') {
-      this.resetConversation(phone);
-    }
-
     if (conv.state !== BOOKING_STATES.IDLE) {
       return this.handleBookingFlow(phone, name, text, conv, ycloud);
     }
 
-    const history = this.getHistory(phone);
+    const history = await this.getHistory(phone);
     history.push({ role: 'user', content: text });
-    this.saveHistory(phone, 'user', text);
+    await this.saveHistory(phone, 'user', text);
 
     const aiResponse = await this.groq.chat(history, name);
-    this.saveHistory(phone, 'assistant', aiResponse);
+    await this.saveHistory(phone, 'assistant', aiResponse);
     await ycloud.sendText(phone, aiResponse);
     logger.info(`💬 ${name} (${phone}): "${text}" → "${aiResponse.substring(0, 60)}..."`);
   }
 
   async startBooking(phone, name, ycloud) {
-    const services = this.getServices();
+    const services = await this.getServices();
     let msg = '📋 *Seleccione el servicio que desea agendar:*\n\n';
     services.forEach((svc, idx) => {
       msg += `${idx + 1}️⃣ *${svc.name}*\n   _${svc.description}_ (${svc.duration_minutes} min)\n\n`;
@@ -209,14 +209,14 @@ class MessageHandler {
     msg += 'Escriba el número del servicio:';
     
     await ycloud.sendText(phone, msg);
-    this.setConversationState(phone, BOOKING_STATES.BOOKING_SERVICE, { services });
+    await this.setConversationState(phone, BOOKING_STATES.BOOKING_SERVICE, { services });
   }
 
   async handleBookingFlow(phone, name, text, conv, ycloud) {
     const msg = text.toLowerCase().trim();
     
     if (msg === 'cancelar' || msg === 'salir') {
-      this.resetConversation(phone);
+      await this.resetConversation(phone);
       await ycloud.sendText(phone, '❌ Proceso cancelado. ¿En qué puedo ayudarle?');
       return;
     }
@@ -231,12 +231,12 @@ class MessageHandler {
       case BOOKING_STATES.BOOKING_CONFIRM:
         return this.handleConfirmation(phone, name, text, conv, ycloud);
       default:
-        this.resetConversation(phone);
+        await this.resetConversation(phone);
     }
   }
 
   async handleServiceSelection(phone, name, text, conv, ycloud) {
-    const services = conv.context.services || this.getServices();
+    const services = conv.context.services || await this.getServices();
     const idx = parseInt(text) - 1;
 
     if (isNaN(idx) || idx < 0 || idx >= services.length) {
@@ -250,25 +250,24 @@ class MessageHandler {
     
     for (let i = 1; i <= 7; i++) {
       const date = addDays(today, i);
-      const dayName = format(date, 'EEEE');
+      const dayName = this.translateDay(format(date, 'EEEE'));
       const dateStr = format(date, 'yyyy-MM-dd');
       const dateDisplay = format(date, 'dd/MM/yyyy');
-      const slots = this.getAvailableSlots(dateStr, selectedService.id);
+      const slots = await this.getAvailableSlots(dateStr, selectedService.id);
       
       if (slots.length > 0) {
-        const dayNameEs = this.translateDay(dayName);
-        dateOptions += `${i}️⃣ *${dayNameEs} ${dateDisplay}* (${slots.length} horarios)\n`;
+        dateOptions += `${i}️⃣ *${dayName} ${dateDisplay}* (${slots.length} horarios)\n`;
       }
     }
 
     if (!dateOptions) {
       await ycloud.sendText(phone, 'Lo siento, no hay disponibilidad en los próximos 7 días.');
-      this.resetConversation(phone);
+      await this.resetConversation(phone);
       return;
     }
 
     await ycloud.sendText(phone, `📅 *Seleccione la fecha para ${selectedService.name}:*\n\n${dateOptions}\nEscriba el número de la fecha:`);
-    this.setConversationState(phone, BOOKING_STATES.BOOKING_DATE, { service: selectedService });
+    await this.setConversationState(phone, BOOKING_STATES.BOOKING_DATE, { service: selectedService });
   }
 
   async handleDateSelection(phone, name, text, conv, ycloud) {
@@ -284,7 +283,7 @@ class MessageHandler {
     const dayName = this.translateDay(format(selectedDate, 'EEEE'));
     const dateDisplay = format(selectedDate, 'dd/MM/yyyy');
     
-    const slots = this.getAvailableSlots(dateStr, conv.context.service.id);
+    const slots = await this.getAvailableSlots(dateStr, conv.context.service.id);
     
     if (slots.length === 0) {
       await ycloud.sendText(phone, 'No hay horarios disponibles para esa fecha. Elija otra:');
@@ -297,7 +296,7 @@ class MessageHandler {
     });
 
     await ycloud.sendText(phone, `⏰ *Horarios disponibles para ${dayName} ${dateDisplay}:*\n\n${timeOptions}\nEscriba el número del horario:`);
-    this.setConversationState(phone, BOOKING_STATES.BOOKING_TIME, { service: conv.context.service, date: dateStr, dateDisplay, dayName, slots });
+    await this.setConversationState(phone, BOOKING_STATES.BOOKING_TIME, { service: conv.context.service, date: dateStr, dateDisplay, dayName, slots });
   }
 
   async handleTimeSelection(phone, name, text, conv, ycloud) {
@@ -321,25 +320,24 @@ class MessageHandler {
       `¿Confirma esta cita?\n\n1️⃣ *Sí, confirmar*\n2️⃣ *No, cancelar*`;
 
     await ycloud.sendText(phone, confirmMsg);
-    this.setConversationState(phone, BOOKING_STATES.BOOKING_CONFIRM, { ...conv.context, time: selectedSlot.start, timeDisplay });
+    await this.setConversationState(phone, BOOKING_STATES.BOOKING_CONFIRM, { ...conv.context, time: selectedSlot.start, timeDisplay });
   }
 
   async handleConfirmation(phone, name, text, conv, ycloud) {
     if (text === '1' || text.includes('si') || text.includes('sí') || text.includes('confirmar')) {
-      const client = queryOne('SELECT id FROM clients WHERE phone = ?', [phone]);
-      let clientId = client ? client.id : null;
+      let client = await queryOne('SELECT id FROM clients WHERE phone = $1', [phone]);
       
-      if (!clientId) {
-        const result = runSql('INSERT INTO clients (phone, name) VALUES (?, ?)', [phone, name]);
-        clientId = result.lastId;
+      if (!client) {
+        const result = await runSql('INSERT INTO clients (phone, name) VALUES ($1, $2) RETURNING id', [phone, name]);
+        client = { id: result.lastId };
       }
 
-      const service = queryOne('SELECT duration_minutes FROM services WHERE name = ?', [conv.context.service.name]);
+      const service = await queryOne('SELECT duration_minutes FROM services WHERE name = $1', [conv.context.service.name]);
       const duration = service ? service.duration_minutes : 60;
 
-      const result = runSql(
-        'INSERT INTO appointments (client_id, service, date, time, duration_minutes, status) VALUES (?, ?, ?, ?, ?, ?)',
-        [clientId, conv.context.service.name, conv.context.date, conv.context.time, duration, 'confirmed']
+      const result = await runSql(
+        'INSERT INTO appointments (client_id, service, date, time, duration_minutes, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+        [client.id, conv.context.service.name, conv.context.date, conv.context.time, duration, 'confirmed']
       );
 
       const timeDisplay = this.formatTime12(conv.context.time);
@@ -350,21 +348,16 @@ class MessageHandler {
         `📅 Fecha: ${conv.context.dayName} ${conv.context.dateDisplay}\n` +
         `⏰ Hora: ${timeDisplay}\n\n` +
         `📍 *Lopez Tech* - Santa Marta, Colombia\n\n` +
-        `Le enviaremos un recordatorio antes de su cita. ¡Nos vemos! 👋`
+        `Le enviaremos un recordatorio. ¡Nos vemos! 👋`
       );
 
-      this.resetConversation(phone);
+      await this.resetConversation(phone);
     } else if (text === '2' || text.includes('no') || text.includes('cancelar')) {
       await ycloud.sendText(phone, '❌ Cita cancelada. ¿Desea agendar otra? Escriba *"agendar"*');
-      this.resetConversation(phone);
+      await this.resetConversation(phone);
     } else {
       await ycloud.sendText(phone, 'Por favor responda *1* para confirmar o *2* para cancelar:');
     }
-  }
-
-  translateDay(day) {
-    const days = { 'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles', 'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo' };
-    return days[day] || day;
   }
 }
 

@@ -1,16 +1,16 @@
 const { queryAll, queryOne } = require('../database/init');
 
 class ServiceCatalog {
-  getAll() {
-    return queryAll('SELECT * FROM services WHERE active = 1 ORDER BY name');
+  async getAll() {
+    return await queryAll('SELECT * FROM services WHERE active = 1 ORDER BY name');
   }
 
-  getByName(name) {
-    return queryOne('SELECT * FROM services WHERE name LIKE ? AND active = 1', [`%${name}%`]);
+  async getByName(name) {
+    return await queryOne('SELECT * FROM services WHERE name ILIKE $1 AND active = 1', [`%${name}%`]);
   }
 
-  getById(id) {
-    return queryOne('SELECT * FROM services WHERE id = ?', [id]);
+  async getById(id) {
+    return await queryOne('SELECT * FROM services WHERE id = $1', [id]);
   }
 }
 

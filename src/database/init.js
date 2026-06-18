@@ -1,164 +1,123 @@
-const initSqlJs = require('sql.js');
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 
-const DB_PATH = process.env.DB_PATH || './data/chatbot.db';
+const DATABASE_URL = process.env.DATABASE_URL;
 
-let db = null;
-let dbReady = false;
+let pool = null;
 
-async function getDb() {
-  if (!db) {
-    await initDatabase();
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      ssl: DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false }
+    });
   }
-  return db;
+  return pool;
 }
 
 async function initDatabase() {
-  const SQL = await initSqlJs();
+  const client = await getPool().connect();
   
-  const dir = path.dirname(path.resolve(DB_PATH));
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  const dbPath = path.resolve(DB_PATH);
-  
-  if (fs.existsSync(dbPath)) {
-    const buffer = fs.readFileSync(dbPath);
-    db = new SQL.Database(buffer);
-  } else {
-    db = new SQL.Database();
-  }
-
-  db.run("PRAGMA journal_mode = WAL");
-  db.run("PRAGMA foreign_keys = ON");
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS clients (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone TEXT UNIQUE NOT NULL,
-      name TEXT DEFAULT 'Cliente',
-      email TEXT,
-      created_at DATETIME DEFAULT (datetime('now')),
-      updated_at DATETIME DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS appointments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_id INTEGER NOT NULL,
-      service TEXT NOT NULL,
-      description TEXT,
-      date DATE NOT NULL,
-      time TIME NOT NULL,
-      duration_minutes INTEGER DEFAULT 60,
-      status TEXT DEFAULT 'pending',
-      notes TEXT,
-      created_at DATETIME DEFAULT (datetime('now')),
-      updated_at DATETIME DEFAULT (datetime('now')),
-      FOREIGN KEY (client_id) REFERENCES clients(id)
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone TEXT NOT NULL,
-      state TEXT DEFAULT 'idle',
-      context TEXT DEFAULT '{}',
-      last_message_at DATETIME DEFAULT (datetime('now')),
-      created_at DATETIME DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS services (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      description TEXT,
-      duration_minutes INTEGER DEFAULT 60,
-      active INTEGER DEFAULT 1
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS blocked_times (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      date DATE NOT NULL,
-      time_start TIME NOT NULL,
-      time_end TIME NOT NULL,
-      reason TEXT,
-      created_at DATETIME DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS chat_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phone TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at DATETIME DEFAULT (datetime('now'))
-    )
-  `);
-
   try {
-    db.run(`CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_appointments_client ON appointments(client_id)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_appointments_status ON appointments(status)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone)`);
-  } catch (e) {
-    // Indexes may already exist
-  }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS clients (
+        id SERIAL PRIMARY KEY,
+        phone TEXT UNIQUE NOT NULL,
+        name TEXT DEFAULT 'Cliente',
+        email TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  saveDatabase();
-  dbReady = true;
-  return db;
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS appointments (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES clients(id),
+        service TEXT NOT NULL,
+        description TEXT,
+        date DATE NOT NULL,
+        time TIME NOT NULL,
+        duration_minutes INTEGER DEFAULT 60,
+        status TEXT DEFAULT 'pending',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS conversations (
+        id SERIAL PRIMARY KEY,
+        phone TEXT NOT NULL,
+        state TEXT DEFAULT 'idle',
+        context TEXT DEFAULT '{}',
+        last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS services (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        duration_minutes INTEGER DEFAULT 60,
+        active INTEGER DEFAULT 1
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_history (
+        id SERIAL PRIMARY KEY,
+        phone TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS blocked_times (
+        id SERIAL PRIMARY KEY,
+        date DATE NOT NULL,
+        time_start TIME NOT NULL,
+        time_end TIME NOT NULL,
+        reason TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query('CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_appointments_client ON appointments(client_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_chat_history_phone ON chat_history(phone)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone)');
+
+    console.log('✅ Base de datos PostgreSQL inicializada');
+  } finally {
+    client.release();
+  }
 }
 
-function saveDatabase() {
-  if (db) {
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(path.resolve(DB_PATH), buffer);
-  }
+async function queryAll(sql, params = []) {
+  const result = await getPool().query(sql, params);
+  return result.rows;
 }
 
-function queryAll(sql, params = []) {
-  const stmt = db.prepare(sql);
-  if (params.length > 0) stmt.bind(params);
-  const results = [];
-  while (stmt.step()) {
-    results.push(stmt.getAsObject());
-  }
-  stmt.free();
-  return results;
+async function queryOne(sql, params = []) {
+  const result = await getPool().query(sql, params);
+  return result.rows[0] || null;
 }
 
-function queryOne(sql, params = []) {
-  const stmt = db.prepare(sql);
-  if (params.length > 0) stmt.bind(params);
-  let result = null;
-  if (stmt.step()) {
-    result = stmt.getAsObject();
-  }
-  stmt.free();
-  return result;
-}
-
-function runSql(sql, params = []) {
-  db.run(sql, params);
-  saveDatabase();
-  return { changes: db.getRowsModified(), lastId: queryOne('SELECT last_insert_rowid() as id')?.id };
+async function runSql(sql, params = []) {
+  const result = await getPool().query(sql, params);
+  return { changes: result.rowCount, lastId: result.rows[0]?.id || null };
 }
 
 function closeDb() {
-  if (db) {
-    saveDatabase();
-    db.close();
-    db = null;
+  if (pool) {
+    pool.end();
+    pool = null;
   }
 }
 
-module.exports = { getDb, initDatabase, closeDb, saveDatabase, queryAll, queryOne, runSql };
+module.exports = { initDatabase, queryAll, queryOne, runSql, closeDb };
